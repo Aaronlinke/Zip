@@ -1,0 +1,154 @@
+{
+  "project_name": "ZipForge",
+  "theme": "DARK",
+  "archetype": "Archetype 4: Swiss & High-Contrast with Archetype 7 Electric Accents",
+  "design_philosophy": "A 100x better, futuristic mobile IDE. Swiss brutalist structure for maximum coding clarity, mixed with high-energy neon cyber accents for AI interactions and actions. 'The command center in your pocket.'",
+  "colors": {
+    "backgrounds": {
+      "main": "#050505",
+      "surface": "#111111",
+      "surface_elevated": "#1A1A1A",
+      "bottom_sheet": "#0F0F0F",
+      "editor_bg": "#0A0A0A"
+    },
+    "borders": {
+      "default": "#2A2A2A",
+      "focus": "#E5FF00",
+      "subtle": "#1F1F1F"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A0A0A0",
+      "tertiary": "#666666",
+      "inverse": "#000000"
+    },
+    "accents": {
+      "primary": "#E5FF00",
+      "secondary": "#00F0FF",
+      "destructive": "#FF3366",
+      "ai_glow": "rgba(229, 255, 0, 0.2)"
+    },
+    "syntax_highlighting": {
+      "keyword": "#FF3366",
+      "string": "#00F0FF",
+      "function": "#E5FF00",
+      "comment": "#666666",
+      "variable": "#FFFFFF",
+      "number": "#B026FF"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Outfit",
+      "body": "JetBrains Mono",
+      "code": "JetBrains Mono"
+    },
+    "sizes": {
+      "h1": "32px",
+      "h2": "24px",
+      "h3": "20px",
+      "body": "16px",
+      "code": "14px",
+      "small": "12px"
+    },
+    "weights": {
+      "headings": "900",
+      "body": "500",
+      "code": "400"
+    },
+    "tracking": {
+      "headings": "-0.04em",
+      "small_caps": "0.05em"
+    }
+  },
+  "spacing_and_layout": {
+    "padding": {
+      "screen": "16px",
+      "card": "16px",
+      "pill": "8px 16px"
+    },
+    "radii": {
+      "card": "12px",
+      "button": "8px",
+      "sheet": "24px"
+    },
+    "borders": {
+      "width": "1px",
+      "active_width": "2px"
+    }
+  },
+  "components": {
+    "bottom_tabs": {
+      "style": "Solid matte charcoal (#0F0F0F) with top border (#2A2A2A), height 72px, plus bottom safe area.",
+      "active_state": "Icon tint #E5FF00 with a subtle top-border indicator inside the tab.",
+      "inactive_state": "Icon tint #666666"
+    },
+    "buttons": {
+      "primary": "Background #E5FF00, Text #000000, flat (no shadow), font-bold uppercase",
+      "secondary": "Background transparent, Border #2A2A2A, Text #FFFFFF",
+      "ai_action": "Background #111111, Border #E5FF00 (1px), Text #E5FF00"
+    },
+    "file_tree": {
+      "folder_icon": "Folder icon (filled for open, outlined for closed)",
+      "file_icon": "FileCode icon",
+      "indentation": "16px per level",
+      "active_file": "Background #1A1A1A, Left border 2px #00F0FF"
+    },
+    "ai_chat_bubble": {
+      "user": "Align right, Background #1A1A1A, Text #FFFFFF, border radius 12px (bottom-right 2px)",
+      "ai": "Align left, Background transparent, Border-left 2px #E5FF00, Text #FFFFFF",
+      "code_snippet": "Nested inside AI bubble, Background #050505, Header with 'Copy' & 'Apply' actions"
+    }
+  },
+  "screens": {
+    "splash": {
+      "layout": "Center aligned logo 'ZipForge' in Outfit font-black, subtle loading animation (terminal cursor), background image with heavy black overlay",
+      "background_image": "https://images.unsplash.com/photo-1626908013351-800ddd734b8a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHxuZW9uJTIwYWJzdHJhY3QlMjB0ZWNobm9sb2d5JTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3ODE4NjY5MzJ8MA&ixlib=rb-4.1.0&q=85",
+      "overlay": "rgba(5,5,5,0.85)"
+    },
+    "projects_home": {
+      "header": "Title 'Forge', big and bold. Top right: Settings icon.",
+      "hero_action": "Large dashed-border card for 'Import ZIP' with a glowing plus icon.",
+      "list": "Recent projects in a flat list. Title, last edited time, tech stack tags."
+    },
+    "file_explorer": {
+      "layout": "Header with project name. Scrollable list of files with collapsible folders. Tap a file to open in Editor."
+    },
+    "code_editor": {
+      "header": "File name, save status, 'Preview' and 'AI' quick actions.",
+      "body": "Syntax highlighted text input (JetBrains Mono). No line wrap by default, horizontal scroll.",
+      "keyboard_accessory": "Row of quick symbols ({, }, [, ], <, >, /, =)"
+    },
+    "live_preview": {
+      "layout": "Full screen WebView. Floating action button (FAB) to switch back to code or refresh."
+    },
+    "ai_assistant": {
+      "layout": "Chat interface. Bottom input with Voice Input button prominently displayed.",
+      "voice_input_active": "Modal/BottomSheet with a pulsating neon ring (#E5FF00) indicating listening state."
+    },
+    "snippets_library": {
+      "layout": "Grid or list of offline templates (e.g., 'React Native Boilerplate', 'Three.js Starter'). Card styling with subtle 1px borders."
+    },
+    "settings": {
+      "layout": "Standard mobile settings list (Theme, Editor Font Size, AI Model Selection, Local Storage usage)."
+    }
+  },
+  "icons_and_assets": {
+    "icon_library": "phosphor-react-native or lucide-react-native",
+    "images": {
+      "onboarding_bg": "https://images.pexels.com/photos/18419510/pexels-photo-18419510.jpeg",
+      "empty_state_projects": "https://images.pexels.com/photos/5473301/pexels-photo-5473301.jpeg"
+    }
+  },
+  "testing": {
+    "instructions": "All interactive elements, buttons, tabs, and list items MUST include a 'testID' (React Native equivalent of data-testid) formatted in kebab-case."
+  },
+  "instructions_to_main_agent": [
+    "Use React Native primitives (View, Text, TextInput, ScrollView, FlatList, TouchableOpacity).",
+    "DO NOT use web-only elements like <div>, <span>, or standard web CSS.",
+    "For styling, you can use NativeWind if configured, or standard React Native StyleSheet matching the color hexes and spacing defined above.",
+    "All navigation should use React Navigation (Bottom Tabs, Stack, Modals).",
+    "For the Code Editor, implement a specialized TextInput or a third-party RN code editor component that supports syntax highlighting.",
+    "Make sure to apply the 'testID' prop to all interactable elements for automated testing."
+  ]
+}
