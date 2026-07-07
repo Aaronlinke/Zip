@@ -1,0 +1,132 @@
+const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+
+export const API_BASE = `${BASE}/api`;
+
+export type ChatMessage = {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type ChatSession = {
+  id: string;
+  title: string;
+  created_at: string;
+  last_message_at: string;
+  message_count: number;
+};
+
+export type Snippet = {
+  id: string;
+  name: string;
+  language: string;
+  tags: string[];
+  description: string;
+  content: string;
+};
+
+export async function sendChatMessage(params: {
+  session_id: string;
+  message: string;
+  code_context?: string;
+  file_name?: string;
+  model?: string;
+  provider?: string;
+}): Promise<ChatMessage> {
+  const res = await fetch(`${API_BASE}/ai/chat/simple`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Chat failed: ${res.status} ${t}`);
+  }
+  return res.json();
+}
+
+export async function fetchSessionMessages(
+  session_id: string
+): Promise<ChatMessage[]> {
+  const res = await fetch(`${API_BASE}/ai/sessions/${session_id}/messages`);
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSessions(): Promise<ChatSession[]> {
+  const res = await fetch(`${API_BASE}/ai/sessions`);
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteSession(session_id: string): Promise<void> {
+  await fetch(`${API_BASE}/ai/sessions/${session_id}`, { method: "DELETE" });
+}
+
+export async function fetchSnippets(): Promise<Snippet[]> {
+  const res = await fetch(`${API_BASE}/snippets`);
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  return res.json();
+}
+
+// ---------- Forge Pipeline ----------
+export type TargetEnv =
+  | "powershell"
+  | "termux"
+  | "python"
+  | "sqlite"
+  | "lua"
+  | "html_js";
+
+export type PipelineFile = {
+  stage: "architect" | "refiner" | "synthesizer";
+  name: string;
+  content: string;
+  language: string;
+};
+
+export type PipelineRun = {
+  id: string;
+  prompt: string;
+  target_env: TargetEnv;
+  files: PipelineFile[];
+  created_at: string;
+};
+
+export async function runForgePipeline(params: {
+  prompt: string;
+  target_env: TargetEnv;
+}): Promise<PipelineRun> {
+  const res = await fetch(`${API_BASE}/forge/pipeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Pipeline failed: ${res.status} ${t}`);
+  }
+  return res.json();
+}
+
+// ---------- Termux Export ----------
+export async function exportTermuxInstaller(params: {
+  project_name: string;
+  files: {
+    path: string;
+    content: string;
+    size: number;
+    language?: string;
+  }[];
+  target_env?: string;
+}): Promise<{ filename: string; content: string; size: number; file_count: number }> {
+  const res = await fetch(`${API_BASE}/export/termux`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+  return res.json();
+}
