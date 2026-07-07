@@ -16,7 +16,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 
 import { colors, spacing, radii, fonts } from "@/src/lib/theme";
-import { exportTermuxInstaller } from "@/src/lib/api";
+import { exportTermuxInstaller, exportApkBuilder } from "@/src/lib/api";
 import {
   getActiveFilePath,
   getActiveProjectId,
@@ -198,6 +198,39 @@ export default function EditorScreen() {
     }
   };
 
+  const exportApk = async () => {
+    if (!project) return;
+    if (dirty) await save();
+    const hasHtml = project.files.some((f) => f.language === "html");
+    if (!hasHtml) {
+      Alert.alert(
+        "Keine HTML-Datei",
+        "APK-Build benötigt eine HTML-Datei (WebView-App). Füge z.B. eine index.html hinzu."
+      );
+      return;
+    }
+    try {
+      const pkgSuffix = project.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const res = await exportApkBuilder({
+        project_name: project.name,
+        package_id: `com.zipforge.${pkgSuffix || "app"}`,
+        files: project.files.map((f) => ({
+          path: f.path,
+          content: f.content,
+          size: f.size,
+          language: f.language,
+        })),
+      });
+      await Clipboard.setStringAsync(res.content);
+      Alert.alert(
+        "APK-Builder bereit",
+        `Package: ${res.package_id}\nMain: ${res.main_html}\nAssets: ${res.file_count}\n\nScript kopiert! In Termux einfügen → APK landet in $HOME/${res.package_id.replace(/\./g, "_")}.apk`
+      );
+    } catch (e) {
+      Alert.alert("APK-Build fehlgeschlagen", String(e));
+    }
+  };
+
   if (!project) {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
@@ -287,6 +320,14 @@ export default function EditorScreen() {
         >
           <Feather name="smartphone" size={14} color={colors.accent} />
           <Text style={styles.actionText}>Termux</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionPill}
+          onPress={exportApk}
+          testID="export-apk-btn"
+        >
+          <Feather name="package" size={14} color={colors.accent} />
+          <Text style={styles.actionText}>APK</Text>
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
         {activePath ? (

@@ -790,6 +790,209 @@ echo -e "\\e[1;32m[SUCCESS] Installation vollständig!\\e[0m"
     }
 
 
+# ---------- APK BUILD ASSISTANT ----------
+class ApkBuildIn(BaseModel):
+    project_name: str
+    package_id: str = "com.zipforge.app"
+    files: List[ProjectFile]
+
+
+@api_router.post("/export/apk")
+async def export_apk_builder(payload: ApkBuildIn):
+    """Generate a self-contained Termux bash script that:
+    1. Installs Java + Android SDK + build tools inside Termux
+    2. Reconstructs the project as an Android WebView-wrapped APK
+    3. Compiles + signs the APK using ecj/d8/aapt2/zipalign/apksigner
+    Every HTML/CSS/JS/asset file in the project is embedded base64 and
+    dropped into the app's assets/ directory."""
+
+    import base64
+
+    # Collect embeddable web assets (HTML/CSS/JS/JSON/images etc.)
+    assets = []
+    for f in payload.files:
+        if f.path.startswith("__MACOSX"):
+            continue
+        raw = f.content
+        # Skip binary placeholder texts
+        if raw.startswith("[Binary file:"):
+            continue
+        b64 = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+        assets.append({"path": f.path, "b64": b64})
+
+    # Detect main HTML
+    main_html = next(
+        (
+            a["path"]
+            for a in assets
+            if a["path"].lower().endswith("index.html")
+        ),
+        None,
+    ) or next(
+        (a["path"] for a in assets if a["path"].lower().endswith(".html")),
+        "index.html",
+    )
+
+    pkg = payload.package_id.strip() or "com.zipforge.app"
+    pkg_path = pkg.replace(".", "/")
+    app_label = payload.project_name.replace('"', "'")[:30] or "ZipForge App"
+
+    # Emit installer script
+    asset_blocks = []
+    for a in assets:
+        asset_blocks.append(
+            f'mkdir -p "$APP/app/src/main/assets/$(dirname "{a["path"]}")"\n'
+            f'printf %s "{a["b64"]}" | base64 -d > "$APP/app/src/main/assets/{a["path"]}"'
+        )
+    assets_sh = "\n".join(asset_blocks) if asset_blocks else '# no assets'
+
+    manifest = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        f'<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="{pkg}">'
+        '<uses-permission android:name="android.permission.INTERNET"/>'
+        f'<application android:label="{app_label}" android:icon="@mipmap/ic_launcher">'
+        '<activity android:name=".MainActivity" android:exported="true">'
+        '<intent-filter><action android:name="android.intent.action.MAIN"/>'
+        '<category android:name="android.intent.category.LAUNCHER"/></intent-filter>'
+        '</activity></application></manifest>'
+    )
+
+    main_activity = f"""package {pkg};
+import android.app.Activity;
+import android.os.Bundle;
+import android.webkit.WebView;
+import android.webkit.WebSettings;
+import android.webkit.WebViewClient;
+public class MainActivity extends Activity {{
+    @Override
+    protected void onCreate(Bundle b) {{
+        super.onCreate(b);
+        WebView w = new WebView(this);
+        WebSettings s = w.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setAllowFileAccess(true);
+        w.setWebViewClient(new WebViewClient());
+        w.loadUrl("file:///android_asset/{main_html}");
+        setContentView(w);
+    }}
+}}
+"""
+
+    installer = f"""#!/bin/bash
+# =====================================================================
+# ZipForge APK Build Assistant  —  {payload.project_name}
+# Package: {pkg} · Main: {main_html} · Files: {len(assets)}
+# =====================================================================
+# Run this in Termux on Android. It installs Java + Android build tools,
+# builds a signed debug APK from your web project (HTML/CSS/JS bundled
+# into a WebView app) and puts the result in $HOME/{pkg.replace('.', '_')}.apk
+# =====================================================================
+set -euo pipefail
+
+echo -e "\\e[1;36m[APK] Prüfe & installiere Build-Umgebung...\\e[0m"
+pkg update -y >/dev/null 2>&1 || true
+pkg install -y coreutils curl unzip openjdk-17 aapt2 apksigner zipalign ecj d8 \\
+    android-tools 2>/dev/null || \\
+  pkg install -y openjdk-17 aapt2 apksigner zipalign ecj d8
+
+APP="$HOME/{pkg.replace('.', '_')}"
+rm -rf "$APP" && mkdir -p "$APP/app/src/main/java/{pkg_path}" \\
+    "$APP/app/src/main/res/values" "$APP/app/src/main/res/mipmap-hdpi" \\
+    "$APP/app/src/main/assets"
+
+echo -e "\\e[1;34m[APK] Schreibe AndroidManifest.xml...\\e[0m"
+cat > "$APP/app/src/main/AndroidManifest.xml" <<'MANIFEST_EOF'
+{manifest}
+MANIFEST_EOF
+
+echo -e "\\e[1;34m[APK] Schreibe MainActivity.java...\\e[0m"
+cat > "$APP/app/src/main/java/{pkg_path}/MainActivity.java" <<'MAINACTIVITY_EOF'
+{main_activity}
+MAINACTIVITY_EOF
+
+echo -e "\\e[1;34m[APK] Baue Web-Assets ({len(assets)} Dateien)...\\e[0m"
+{assets_sh}
+
+echo -e "\\e[1;34m[APK] Minimales App-Icon...\\e[0m"
+# 1x1 PNG placeholder icon
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4//8/AwAI/AL+XJTz6gAAAABJRU5ErkJggg==' \\
+  | base64 -d > "$APP/app/src/main/res/mipmap-hdpi/ic_launcher.png"
+
+ANDROID_JAR="$PREFIX/share/aapt/android.jar"
+if [ ! -f "$ANDROID_JAR" ]; then
+  echo -e "\\e[1;33m[APK] Lade android.jar (Framework SDK)...\\e[0m"
+  mkdir -p "$PREFIX/share/aapt"
+  curl -L -o "$ANDROID_JAR" \\
+    "https://github.com/Sable/android-platforms/raw/master/android-33/android.jar" || \\
+  curl -L -o "$ANDROID_JAR" \\
+    "https://raw.githubusercontent.com/Sable/android-platforms/master/android-30/android.jar"
+fi
+
+cd "$APP"
+echo -e "\\e[1;34m[APK] aapt2 compile resources...\\e[0m"
+mkdir -p build/compiled
+aapt2 compile --dir app/src/main/res -o build/compiled/res.zip 2>/dev/null || true
+
+echo -e "\\e[1;34m[APK] aapt2 link...\\e[0m"
+aapt2 link -o build/app-unsigned.apk \\
+  -I "$ANDROID_JAR" \\
+  --manifest app/src/main/AndroidManifest.xml \\
+  -A app/src/main/assets \\
+  build/compiled/res.zip 2>/dev/null || \\
+aapt2 link -o build/app-unsigned.apk \\
+  -I "$ANDROID_JAR" \\
+  --manifest app/src/main/AndroidManifest.xml \\
+  -A app/src/main/assets
+
+echo -e "\\e[1;34m[APK] Kompiliere Java sources...\\e[0m"
+mkdir -p build/classes
+ecj -cp "$ANDROID_JAR" -d build/classes \\
+  $(find app/src/main/java -name '*.java')
+
+echo -e "\\e[1;34m[APK] d8 → classes.dex...\\e[0m"
+mkdir -p build/dex
+d8 --lib "$ANDROID_JAR" --output build/dex \\
+  $(find build/classes -name '*.class')
+
+echo -e "\\e[1;34m[APK] Packe DEX in APK...\\e[0m"
+cp build/app-unsigned.apk build/app-with-dex.apk
+cd build && zip -j app-with-dex.apk dex/classes.dex && cd ..
+
+echo -e "\\e[1;34m[APK] Zipalign...\\e[0m"
+zipalign -f 4 build/app-with-dex.apk build/app-aligned.apk
+
+echo -e "\\e[1;34m[APK] Signiere (debug keystore)...\\e[0m"
+if [ ! -f "$HOME/.zipforge_debug.keystore" ]; then
+  keytool -genkeypair -v \\
+    -keystore "$HOME/.zipforge_debug.keystore" \\
+    -storepass zipforge -keypass zipforge \\
+    -alias zipforge -keyalg RSA -keysize 2048 -validity 10000 \\
+    -dname "CN=ZipForge, O=ZipForge, C=DE"
+fi
+apksigner sign --ks "$HOME/.zipforge_debug.keystore" \\
+  --ks-pass pass:zipforge --key-pass pass:zipforge \\
+  --out "$HOME/{pkg.replace('.', '_')}.apk" \\
+  build/app-aligned.apk
+
+echo ""
+echo -e "\\e[1;32m===============================================\\e[0m"
+echo -e "\\e[1;32m[SUCCESS] APK gebaut:\\e[0m"
+echo -e "  \\e[1;33m$HOME/{pkg.replace('.', '_')}.apk\\e[0m"
+echo -e "\\e[1;32m===============================================\\e[0m"
+echo -e "Installiere direkt:  \\e[1;33mtermux-open $HOME/{pkg.replace('.', '_')}.apk\\e[0m"
+"""
+
+    return {
+        "filename": f"build_apk_{pkg.replace('.', '_')}.sh",
+        "content": installer,
+        "size": len(installer),
+        "file_count": len(assets),
+        "package_id": pkg,
+        "main_html": main_html,
+    }
+
+
 # Include the router in the main app
 app.include_router(api_router)
 

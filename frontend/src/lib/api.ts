@@ -140,3 +140,29 @@ export async function exportTermuxInstaller(params: {
   if (!res.ok) throw new Error(`Export failed: ${res.status}`);
   return res.json();
 }
+
+export async function exportApkBuilder(params: {
+  project_name: string;
+  package_id?: string;
+  files: {
+    path: string;
+    content: string;
+    size: number;
+    language?: string;
+  }[];
+}): Promise<{
+  filename: string;
+  content: string;
+  size: number;
+  file_count: number;
+  package_id: string;
+  main_html: string;
+}> {
+  const res = await fetch(`${API_BASE}/export/apk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(`APK export failed: ${res.status}`);
+  return res.json();
+}

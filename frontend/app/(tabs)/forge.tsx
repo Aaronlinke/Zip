@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -13,10 +13,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 
 import { colors, spacing, radii, fonts } from "@/src/lib/theme";
+import { storage } from "@/src/utils/storage";
 import {
   startForgePipeline,
   getForgeJob,
@@ -30,6 +31,8 @@ import {
   setActiveFilePath,
   setActiveProjectId,
 } from "@/src/lib/projectStore";
+
+const ACTIVE_JOB_KEY = "zipforge.activeJobId";
 
 const TARGETS: {
   id: TargetEnv;
@@ -91,6 +94,7 @@ export default function ForgePipeline() {
   const [currentStage, setCurrentStage] = useState<string | null>(null);
   const [result, setResult] = useState<PipelineJob | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const pollingRef = useRef<boolean>(false);
 
   const setTargetAndHint = (t: TargetEnv) => {
     setTarget(t);
@@ -98,44 +102,96 @@ export default function ForgePipeline() {
     if (hint) setPrompt(hint);
   };
 
+  const pollJob = useCallback(async (jobId: string) => {
+    if (pollingRef.current) return; // already polling
+    pollingRef.current = true;
+    setRunning(true);
+    const maxAttempts = 180; // 6 minutes at 2s
+    let attempts = 0;
+    let job: PipelineJob | null = null;
+    while (attempts < maxAttempts && pollingRef.current) {
+      try {
+        job = await getForgeJob(jobId);
+        setResult(job);
+        setCurrentStage(job.stage);
+        if (job.status === "done" || job.status === "error") break;
+      } catch {
+        // Silent retry on network flake
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      attempts++;
+    }
+    pollingRef.current = false;
+    setRunning(false);
+    setCurrentStage(null);
+    if (job?.status === "done") {
+      await storage.removeItem(ACTIVE_JOB_KEY);
+      setExpanded(job.files[job.files.length - 1]?.name || null);
+    } else if (job?.status === "error") {
+      await storage.removeItem(ACTIVE_JOB_KEY);
+      const err = job.error || "Unknown error";
+      const friendly = err.includes("Budget has been exceeded")
+        ? "Emergent LLM Key Budget aufgebraucht.\n\nBitte lade unter Profile → Universal Key → Add Balance auf oder aktiviere Auto-Top-Up. Dein bisher generierter Code ist erhalten."
+        : err;
+      Alert.alert("Pipeline gestoppt", friendly);
+    }
+    return job;
+  }, []);
+
+  // Resume any active job on mount / focus
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      (async () => {
+        const savedId = await storage.getItem<string>(ACTIVE_JOB_KEY, "");
+        if (!savedId || pollingRef.current || !active) return;
+        try {
+          const job = await getForgeJob(savedId);
+          if (!active) return;
+          setResult(job);
+          if (job.status === "pending" || job.status === "running") {
+            pollJob(savedId);
+          } else if (job.status === "done") {
+            setExpanded(job.files[job.files.length - 1]?.name || null);
+            await storage.removeItem(ACTIVE_JOB_KEY);
+          } else {
+            await storage.removeItem(ACTIVE_JOB_KEY);
+          }
+        } catch {
+          await storage.removeItem(ACTIVE_JOB_KEY);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, [pollJob])
+  );
+
   const start = useCallback(async () => {
     if (!prompt.trim() || running) return;
-    setRunning(true);
     setResult(null);
     setCurrentStage("architect");
+    setRunning(true);
     try {
       const { job_id } = await startForgePipeline({
         prompt: prompt.trim(),
         target_env: target,
       });
-      // Poll every 2s
-      let attempts = 0;
-      const maxAttempts = 90; // 3 minutes
-      let job: PipelineJob | null = null;
-      while (attempts < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 2000));
-        try {
-          job = await getForgeJob(job_id);
-          setResult(job);
-          setCurrentStage(job.stage);
-          if (job.status === "done" || job.status === "error") break;
-        } catch {}
-        attempts++;
-      }
-      if (job?.status === "error") {
-        Alert.alert("Pipeline error", job.error || "Unknown error");
-      } else if (job?.status === "done") {
-        setExpanded(job.files[job.files.length - 1]?.name || null);
-      } else {
-        Alert.alert("Timeout", "Pipeline did not finish in time.");
-      }
+      await storage.setItem(ACTIVE_JOB_KEY, job_id);
+      await pollJob(job_id);
     } catch (e) {
-      Alert.alert("Pipeline failed", String(e));
-    } finally {
-      setCurrentStage(null);
       setRunning(false);
+      setCurrentStage(null);
+      Alert.alert("Pipeline failed to start", String(e));
     }
-  }, [prompt, target, running]);
+  }, [prompt, target, running, pollJob]);
+
+  const cancelLocal = useCallback(async () => {
+    pollingRef.current = false;
+    setRunning(false);
+    setCurrentStage(null);
+    await storage.removeItem(ACTIVE_JOB_KEY);
+  }, []);
 
   const openAsProject = async () => {
     if (!result) return;
@@ -242,7 +298,9 @@ export default function ForgePipeline() {
               <>
                 <ActivityIndicator color={colors.textInverse} />
                 <Text style={styles.runBtnText}>
-                  {currentStage ? `Stage: ${STAGE_LABEL[currentStage]}...` : "STARTING..."}
+                  {currentStage
+                    ? `${STAGE_LABEL[currentStage]} · ${result?.files.length ?? 0}/3 FILES`
+                    : "STARTING..."}
                 </Text>
               </>
             ) : (
@@ -254,12 +312,25 @@ export default function ForgePipeline() {
           </TouchableOpacity>
 
           {running ? (
+            <TouchableOpacity
+              onPress={cancelLocal}
+              testID="cancel-pipeline-btn"
+              style={styles.cancelBtn}
+            >
+              <Feather name="x" size={14} color={colors.textSecondary} />
+              <Text style={styles.cancelText}>Stop polling (job runs on)</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {running ? (
             <View style={styles.stages}>
               {["architect", "refiner", "synthesizer"].map((s, i) => {
-                const active = currentStage === s;
-                const done =
-                  currentStage === null ||
-                  ["architect", "refiner", "synthesizer"].indexOf(currentStage) > i;
+                const stageIdx = ["architect", "refiner", "synthesizer"].indexOf(
+                  currentStage || ""
+                );
+                const filesDone = result?.files.length ?? 0;
+                const done = i < filesDone;
+                const active = i === stageIdx && !done;
                 return (
                   <View key={s} style={styles.stageRow}>
                     <View
@@ -289,7 +360,7 @@ export default function ForgePipeline() {
             </View>
           ) : null}
 
-          {result ? (
+          {result && result.files.length > 0 ? (
             <View style={{ marginTop: spacing.lg }}>
               <View style={styles.resultHeader}>
                 <Text style={styles.section}>RESULT · {result.files.length} FILES</Text>
@@ -428,6 +499,19 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 1.5,
     fontSize: 13,
+  },
+  cancelBtn: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+  },
+  cancelText: {
+    color: colors.textSecondary,
+    fontFamily: fonts.mono,
+    fontSize: 11,
   },
   stages: {
     marginTop: spacing.lg,

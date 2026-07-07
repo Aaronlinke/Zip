@@ -11,7 +11,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
 import { useFocusEffect, useRouter } from "expo-router";
 import JSZip from "jszip";
 
@@ -64,11 +63,11 @@ export default function ProjectsHome() {
       }
       const asset = res.assets[0];
       setProgress("Reading ZIP...");
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Cross-platform: fetch the file (works for both file:// and blob: URIs)
+      const response = await fetch(asset.uri);
+      const arrayBuffer = await response.arrayBuffer();
       setProgress("Extracting...");
-      const zip = await JSZip.loadAsync(base64, { base64: true });
+      const zip = await JSZip.loadAsync(arrayBuffer);
 
       const files: Project["files"] = [];
       const entries = Object.values(zip.files);

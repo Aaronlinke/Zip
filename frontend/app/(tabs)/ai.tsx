@@ -136,13 +136,17 @@ export default function AiChat() {
       });
       setMessages((prev) => [...prev, res]);
     } catch (e) {
+      const errStr = String(e);
+      const friendly = errStr.includes("Budget has been exceeded")
+        ? "⚠️ Emergent LLM Key Budget aufgebraucht.\n\nBitte lade unter Profile → Universal Key → Add Balance auf."
+        : `⚠️ Error: ${errStr}`;
       setMessages((prev) => [
         ...prev,
         {
           id: `err_${Date.now()}`,
           session_id: sessionId,
           role: "assistant",
-          content: `⚠️ Error: ${String(e)}`,
+          content: friendly,
           created_at: new Date().toISOString(),
         },
       ]);
