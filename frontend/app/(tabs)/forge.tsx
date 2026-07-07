@@ -18,8 +18,9 @@ import * as Clipboard from "expo-clipboard";
 
 import { colors, spacing, radii, fonts } from "@/src/lib/theme";
 import {
-  runForgePipeline,
-  PipelineRun,
+  startForgePipeline,
+  getForgeJob,
+  PipelineJob,
   TargetEnv,
 } from "@/src/lib/api";
 import {
@@ -88,7 +89,7 @@ export default function ForgePipeline() {
   );
   const [running, setRunning] = useState(false);
   const [currentStage, setCurrentStage] = useState<string | null>(null);
-  const [result, setResult] = useState<PipelineRun | null>(null);
+  const [result, setResult] = useState<PipelineJob | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const setTargetAndHint = (t: TargetEnv) => {
@@ -102,19 +103,35 @@ export default function ForgePipeline() {
     setRunning(true);
     setResult(null);
     setCurrentStage("architect");
-    // Fake stage progress (backend runs sequentially, but user gets feedback)
-    const stageTimers = [
-      setTimeout(() => setCurrentStage("refiner"), 6000),
-      setTimeout(() => setCurrentStage("synthesizer"), 14000),
-    ];
     try {
-      const res = await runForgePipeline({ prompt: prompt.trim(), target_env: target });
-      setResult(res);
-      setExpanded(res.files[res.files.length - 1]?.name || null);
+      const { job_id } = await startForgePipeline({
+        prompt: prompt.trim(),
+        target_env: target,
+      });
+      // Poll every 2s
+      let attempts = 0;
+      const maxAttempts = 90; // 3 minutes
+      let job: PipelineJob | null = null;
+      while (attempts < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          job = await getForgeJob(job_id);
+          setResult(job);
+          setCurrentStage(job.stage);
+          if (job.status === "done" || job.status === "error") break;
+        } catch {}
+        attempts++;
+      }
+      if (job?.status === "error") {
+        Alert.alert("Pipeline error", job.error || "Unknown error");
+      } else if (job?.status === "done") {
+        setExpanded(job.files[job.files.length - 1]?.name || null);
+      } else {
+        Alert.alert("Timeout", "Pipeline did not finish in time.");
+      }
     } catch (e) {
       Alert.alert("Pipeline failed", String(e));
     } finally {
-      stageTimers.forEach(clearTimeout);
       setCurrentStage(null);
       setRunning(false);
     }

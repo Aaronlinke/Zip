@@ -14,6 +14,12 @@ from datetime import datetime, timezone
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -531,71 +537,143 @@ def forge_system_prompt(env: str, stage: str) -> str:
     return base + "\nSTAGE: SYNTHESIZER — merge both versions into the final production-ready release. Maximise performance, correctness, readability."
 
 
-@api_router.post("/forge/pipeline", response_model=PipelineOut)
-async def forge_pipeline(payload: PipelineIn):
+@api_router.post("/forge/pipeline")
+async def forge_pipeline_start(payload: PipelineIn):
+    """Start an async 3-stage Forge job. Returns job_id immediately; poll
+    /api/forge/pipeline/{job_id} for status and files."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
     if payload.target_env not in TARGET_EXTS:
         raise HTTPException(status_code=400, detail="Invalid target_env")
 
-    exts = TARGET_EXTS[payload.target_env]
-    env_label = ENV_LABELS[payload.target_env]
-    session_id = f"forge_{uuid.uuid4().hex[:10]}"
+    job_id = f"forge_{uuid.uuid4().hex[:12]}"
+    job = {
+        "id": job_id,
+        "status": "pending",
+        "stage": None,
+        "prompt": payload.prompt,
+        "target_env": payload.target_env,
+        "files": [],
+        "error": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.forge_jobs.insert_one(job)
 
-    files: List[PipelineFile] = []
-    stages = ["architect", "refiner", "synthesizer"]
-    prev_code = ""
-
-    for idx, stage in enumerate(stages):
-        filename, language = exts[idx]
-        sys_prompt = forge_system_prompt(payload.target_env, stage)
-        if stage == "architect":
-            user_prompt = (
-                f"TARGET SYSTEM: {env_label}\n"
-                f"PROBLEM: {payload.prompt}\n\n"
-                "Deliver the complete architecture code now."
-            )
-        elif stage == "refiner":
-            user_prompt = (
-                f"TARGET SYSTEM: {env_label}\n"
-                f"PREVIOUS FILE ({exts[0][0]}):\n\n```\n{prev_code}\n```\n\n"
-                "Audit and produce the hardened refined version now."
-            )
-        else:
-            user_prompt = (
-                f"TARGET SYSTEM: {env_label}\n"
-                f"REFINED FILE ({exts[1][0]}):\n\n```\n{prev_code}\n```\n\n"
-                "Merge everything into the final production release now."
-            )
-
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"{session_id}_{stage}",
-            system_message=sys_prompt,
-        ).with_model(payload.provider, payload.model)
-
+    async def worker():
         try:
-            raw = await chat.send_message(UserMessage(text=user_prompt))
+            exts = TARGET_EXTS[payload.target_env]
+            env_label = ENV_LABELS[payload.target_env]
+            stages = ["architect", "refiner", "synthesizer"]
+            prev_code = ""
+
+            for idx, stage in enumerate(stages):
+                await db.forge_jobs.update_one(
+                    {"id": job_id},
+                    {
+                        "$set": {
+                            "status": "running",
+                            "stage": stage,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    },
+                )
+                filename, language = exts[idx]
+                sys_prompt = forge_system_prompt(payload.target_env, stage)
+                if stage == "architect":
+                    user_prompt = (
+                        f"TARGET SYSTEM: {env_label}\n"
+                        f"PROBLEM: {payload.prompt}\n\n"
+                        "Deliver the complete architecture code now."
+                    )
+                elif stage == "refiner":
+                    user_prompt = (
+                        f"TARGET SYSTEM: {env_label}\n"
+                        f"PREVIOUS FILE ({exts[0][0]}):\n\n"
+                        f"```\n{prev_code}\n```\n\n"
+                        "Audit and produce the hardened refined version now."
+                    )
+                else:
+                    user_prompt = (
+                        f"TARGET SYSTEM: {env_label}\n"
+                        f"REFINED FILE ({exts[1][0]}):\n\n"
+                        f"```\n{prev_code}\n```\n\n"
+                        "Merge everything into the final production release now."
+                    )
+
+                chat = LlmChat(
+                    api_key=EMERGENT_LLM_KEY,
+                    session_id=f"{job_id}_{stage}",
+                    system_message=sys_prompt,
+                ).with_model(payload.provider, payload.model)
+
+                raw = await chat.send_message(UserMessage(text=user_prompt))
+                code = strip_code_fences(str(raw))
+                prev_code = code
+                file_entry = {
+                    "stage": stage,
+                    "name": filename,
+                    "content": code,
+                    "language": language,
+                }
+                await db.forge_jobs.update_one(
+                    {"id": job_id},
+                    {
+                        "$push": {"files": file_entry},
+                        "$set": {
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        },
+                    },
+                )
+
+            await db.forge_jobs.update_one(
+                {"id": job_id},
+                {
+                    "$set": {
+                        "status": "done",
+                        "stage": None,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
+            # Snapshot into runs history (for /api/forge/runs)
+            final = await db.forge_jobs.find_one({"id": job_id}, {"_id": 0})
+            if final:
+                await db.forge_runs.insert_one(
+                    {
+                        "id": final["id"],
+                        "prompt": final["prompt"],
+                        "target_env": final["target_env"],
+                        "files": final["files"],
+                        "created_at": final["created_at"],
+                    }
+                )
         except Exception as e:  # noqa: BLE001
-            logger.exception("Pipeline LLM error at %s", stage)
-            raise HTTPException(status_code=502, detail=f"LLM error at {stage}: {e}")
+            logger.exception("Forge worker failed")
+            await db.forge_jobs.update_one(
+                {"id": job_id},
+                {
+                    "$set": {
+                        "status": "error",
+                        "error": str(e),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
 
-        code = strip_code_fences(str(raw))
-        prev_code = code
-        files.append(
-            PipelineFile(stage=stage, name=filename, content=code, language=language)
-        )
+    # Fire-and-forget
+    import asyncio
 
-    result = PipelineOut(
-        id=session_id,
-        prompt=payload.prompt,
-        target_env=payload.target_env,
-        files=files,
-        created_at=datetime.now(timezone.utc).isoformat(),
-    )
-    # Persist for history
-    await db.forge_runs.insert_one(result.model_dump())
-    return result
+    asyncio.create_task(worker())
+    return {"job_id": job_id, "status": "pending"}
+
+
+@api_router.get("/forge/pipeline/{job_id}")
+async def forge_pipeline_status(job_id: str):
+    doc = await db.forge_jobs.find_one({"id": job_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return doc
 
 
 @api_router.get("/forge/runs", response_model=List[PipelineOut])
@@ -722,12 +800,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
 
 
 @app.on_event("shutdown")

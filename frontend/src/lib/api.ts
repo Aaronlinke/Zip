@@ -71,7 +71,7 @@ export async function fetchSnippets(): Promise<Snippet[]> {
   return res.json();
 }
 
-// ---------- Forge Pipeline ----------
+// ---------- Forge Pipeline (async job pattern) ----------
 export type TargetEnv =
   | "powershell"
   | "termux"
@@ -87,18 +87,22 @@ export type PipelineFile = {
   language: string;
 };
 
-export type PipelineRun = {
+export type PipelineJob = {
   id: string;
+  status: "pending" | "running" | "done" | "error";
+  stage: "architect" | "refiner" | "synthesizer" | null;
   prompt: string;
   target_env: TargetEnv;
   files: PipelineFile[];
+  error: string | null;
   created_at: string;
+  updated_at: string;
 };
 
-export async function runForgePipeline(params: {
+export async function startForgePipeline(params: {
   prompt: string;
   target_env: TargetEnv;
-}): Promise<PipelineRun> {
+}): Promise<{ job_id: string; status: string }> {
   const res = await fetch(`${API_BASE}/forge/pipeline`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -106,8 +110,14 @@ export async function runForgePipeline(params: {
   });
   if (!res.ok) {
     const t = await res.text();
-    throw new Error(`Pipeline failed: ${res.status} ${t}`);
+    throw new Error(`Pipeline start failed: ${res.status} ${t}`);
   }
+  return res.json();
+}
+
+export async function getForgeJob(jobId: string): Promise<PipelineJob> {
+  const res = await fetch(`${API_BASE}/forge/pipeline/${jobId}`);
+  if (!res.ok) throw new Error(`Job fetch failed: ${res.status}`);
   return res.json();
 }
 
