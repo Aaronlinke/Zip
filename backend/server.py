@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -991,6 +991,55 @@ echo -e "Installiere direkt:  \\e[1;33mtermux-open $HOME/{pkg.replace('.', '_')}
         "package_id": pkg,
         "main_html": main_html,
     }
+
+
+# ---------- SELF-EXPORT (ZIP of the whole codebase) ----------
+@api_router.get("/export/source")
+async def export_source():
+    """Download the entire ZipForge source as a ZIP file."""
+    zip_path = "/app/exports/zipforge_source.zip"
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=404, detail="Source ZIP not built")
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename="zipforge_source.zip",
+    )
+
+
+@api_router.get("/export/source/manifest")
+async def export_source_manifest():
+    """Return JSON manifest of every file in the source ZIP with full content."""
+    import base64
+    import zipfile
+
+    zip_path = "/app/exports/zipforge_source.zip"
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=404, detail="Source ZIP not built")
+
+    files = []
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            with zf.open(info) as fp:
+                raw = fp.read()
+            # UTF-8 decode where possible, otherwise base64
+            try:
+                content = raw.decode("utf-8")
+                encoding = "utf-8"
+            except UnicodeDecodeError:
+                content = base64.b64encode(raw).decode("ascii")
+                encoding = "base64"
+            files.append(
+                {
+                    "path": info.filename,
+                    "size": info.file_size,
+                    "encoding": encoding,
+                    "content": content,
+                }
+            )
+    return {"count": len(files), "files": files}
 
 
 # Include the router in the main app
